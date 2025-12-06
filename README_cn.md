@@ -6,19 +6,21 @@
 
 本项目是一个基于 **SAM3** 的交互式分割 Web Demo，提供三种模式：
 
-- **悬停选取**：在浏览器中使用 **decoder-only ONNX 模型** 实现毫秒级悬停分割。
+- **悬停选取**：在浏览器中使用 **decoder‑only ONNX 模型** 实现毫秒级悬停分割。
 - **点击分割**：后端 PyTorch 在点击点附近进行精细分割。
 - **文字分割**：通过文本提示（例如 `car, wheel`）进行分割。
 
-整体架构：后端使用 **SAM3 encoder（PyTorch）** 做一次整图特征提取，前端使用 **decoder-only ONNX 模型** 做快速交互，在速度和效果之间取得平衡。
+整体思路：后端用 **SAM3 encoder（PyTorch）** 对整张图片做一次特征提取，前端用 **decoder‑only ONNX 模型** 在浏览器里做快速悬停解码，在速度和效果之间取得平衡。
 
-更详细的技术拆解（架构、接口、ONNX 导出、坐标映射等）参见：
+更多技术细节（架构、接口、ONNX 导出、坐标映射等）可参考：
 
 - `SAM3_auto_selection_summary.md`
 
 ---
 
-## 1. 下载 SAM3 模型
+## 1. 环境与使用步骤
+
+### 第一步：下载 SAM3 模型
 
 1. **官方模型（优先推荐）**
 
@@ -37,102 +39,55 @@
      <https://www.modelscope.cn/models/facebook/sam3/>
    - 同样放到本地某个目录（例如仍然使用 `D:\HF_DATA\sam3`）。
 
-稍后在前端页面中，需要把这个本地路径填到 **“Sam3 模型地址”** 输入框中。
+稍后在 Web 页面中，需要将这个本地路径填入 **“Sam3 模型地址”** 输入框。
 
----
-
-## 2. 目录结构
-
-- `server.py` – FastAPI 后端：图片上传、点 / 文本分割、特征导出、ONNX 模型下载。
-- `web.html` – 前端 UI（HTML + CSS + JS），使用 `onnxruntime-web` 做悬停解码。
-- `sam3_decoder_onnx/export_sam3_decoder_onnx.py` – 导出 **仅 Decoder** 的 SAM3 ONNX（支持量化）。
-- `sam3_decoder_onnx/verify_sam3_decoder_onnx.py` – 校验 ONNX Decoder 与 PyTorch Decoder 的误差。
-- `SAM3_auto_selection_summary.md` – 详细技术说明文档。
-
----
-
-## 3. 导出 Decoder ONNX
-
-在仓库根目录（`sam3-demo`）执行：
+### 第二步：克隆本仓库
 
 ```bash
-python sam3_decoder_onnx/export_sam3_decoder_onnx.py ^
-  --model-path "D:\HF_DATA\sam3" ^
-  --out sam3_decoder_onnx/sam3_decoder.onnx ^
-  --quant-out sam3_decoder_onnx/sam3_decoder_quant.onnx
+git clone https://github.com/Hasasasa/Sam3_AutoSelection.git
+cd Sam3_AutoSelection
 ```
 
-如果脚本中的默认参数与你的路径一致，也可以直接：
+### 第三步：创建并安装虚拟环境
 
-```bash
-python sam3_decoder_onnx/export_sam3_decoder_onnx.py
-```
-
----
-
-## 4. 校验 Decoder ONNX（可选）
-
-```bash
-python sam3_decoder_onnx/verify_sam3_decoder_onnx.py ^
-  --model-path "D:\HF_DATA\sam3" ^
-  --onnx-path "sam3_decoder_onnx/sam3_decoder.onnx"
-
-python sam3_decoder_onnx/verify_sam3_decoder_onnx.py ^
-  --model-path "D:\HF_DATA\sam3" ^
-  --onnx-path "sam3_decoder_onnx/sam3_decoder_quant.onnx"
-```
-
-脚本会打印 PyTorch 与 ONNX 掩膜之间的误差，数值很小即可放心使用。
-
----
-
-## 5. 创建并使用虚拟环境
-
-本仓库提供了一个一键脚本 `setup_venv.bat` 用于创建虚拟环境并安装依赖。
-
-在仓库根目录执行：
+使用仓库提供的一键脚本创建虚拟环境并安装依赖：
 
 ```bat
-cd Sam3_AutoSelection
 setup_venv.bat
 ```
 
 脚本会：
 
-- 在当前目录创建 `.\venv` 虚拟环境。
-- 激活虚拟环境。
-- 根据 `requirements.txt` 安装所有依赖。
+- 在当前目录创建 `.\venv` 虚拟环境；
+- 自动激活该虚拟环境；
+- 根据 `requirements.txt` 安装所有依赖包。
 
-以后每次使用项目时，只需先手动激活虚拟环境：
+之后每次使用项目，只需先手动激活虚拟环境：
 
 ```bat
 cd Sam3_AutoSelection
 venv\Scripts\activate
 ```
 
----
+### 第四步：启动后端服务
 
-## 6. 启动后端
+在已经激活的虚拟环境中运行：
 
-```bash
+```bat
 python server.py
-# 默认监听 http://0.0.0.0:8000
 ```
 
-前端默认认为后端地址为：
+默认 API 监听在：
 
-- `http://localhost:8000`
+- `http://0.0.0.0:8000`  
+  前端通常使用 `http://localhost:8000` 作为后端地址。
 
-可以在 `web.html` 顶部的 **“后端模型地址”** 输入框中修改。
+### 第五步：在浏览器中使用 Web UI
 
----
-
-## 7. 使用 Web UI
-
-1. 在浏览器中打开 `web.html`。
+1. 在浏览器中打开 `web.html`（例如在资源管理器中双击，或者在编辑器里右键“在浏览器中打开”）。
 2. 在页面顶部配置：
-   - **后端模型地址**：通常为 `http://localhost:8000`。
-   - **Sam3 模型地址**：填入你刚才下载好的 SAM3 模型所在路径，例如：
+   - **后端模型地址**：一般为 `http://localhost:8000`。
+   - **Sam3 模型地址**：填写你刚才下载好的 SAM3 模型所在路径，例如：
 
      ```text
      D:/HF_DATA/sam3
@@ -140,16 +95,17 @@ python server.py
 3. 点击 **“上传图片”**：
    - 将图片上传到后端。
    - 使用 SAM3 encoder 跑一次整图特征。
-   - 下载 decoder-only ONNX 模型（如尚未加载）。
+   - 下载 decoder‑only ONNX 模型（如果此前尚未加载）。
    - 调用 `/get_embeddings` 预计算悬停用特征。
-   - 如果过程失败，右侧的 **“重试预处理”** 按钮会变为可用，可在修复后端 / 路径后重新预处理。
+   - 如果上传或预处理失败，右侧的 **“重试预处理”** 按钮会变为可用；在修复后端或路径后，点击即可重新预处理，无需重新选择图片。
 4. 使用三种模式：
-   - **悬停选取**：移动鼠标即可看到实时掩膜；点击可将当前 hover 结果“固定”，并在边缘画白线。
-   - **点击分割**：在“点击分割”模式下点击目标区域，后端返回高质量掩膜并描白边。
-   - **文字分割**：输入英文提示（逗号分隔，如 `window,wheel`），点击“运行文字分割”。
+   - **悬停选取**：移动鼠标即可看到实时掩膜；点击可将当前 hover 结果“固定”，并在边缘画 2 像素左右的白线，仅保留一个固定选区。
+   - **点击分割**：在“点击分割”模式下点击目标区域，后端返回高质量掩膜，并在边缘描白。
+   - **文字分割**：在文本框中输入英文提示（逗号分隔，如 `window,wheel`），点击“运行文字分割”，后端根据文本生成掩膜。
 
 ---
 
-## 6. 许可证
+## 2. 许可证
 
 请阅读仓库中的 `LICENSE` 文件，了解并遵守本项目的使用许可条款。
+
