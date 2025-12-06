@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SAM 3 Auto Selection</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: #020617;
+        color: #e5e7eb;
+      }
+
+      .app-root {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 20px;
+        background: #020617;
+        border-bottom: 1px solid #111827;
+      }
+
+      .logo {
+        font-weight: 700;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+      }
+
+      .logo span.accent {
+        color: #3b82f6;
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .logo-icon {
+        width: 24px;
+        height: 24px;
+        object-fit: contain;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex: 1;
+        justify-content: center;
+      }
+
+      .server-input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+
+      .inputs-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      #serverInput,
+      #modelPathInput {
+        background: #020617;
+        border-radius: 6px;
+        border: 1px solid #374151;
+        padding: 6px 32px 6px 8px;
+        min-width: 260px;
+        color: #e5e7eb;
+        font-size: 13px;
+      }
+
+      #serverInput:focus {
+        outline: none;
+        border-color: #3b82f6;
+      }
+
+      .status-dot {
+        position: absolute;
+        right: 8px;
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        border: 2px solid #020617;
+        box-shadow: 0 0 0 1px #020617;
+      }
+
+      .status-dot.offline {
+        background: #ef4444;
+      }
+
+      .status-dot.online {
+        background: #22c55e;
+      }
+
+      #uploadButton {
+        background: #2563eb;
+        border-radius: 999px;
+        border: none;
+        padding: 8px 16px;
+        color: #f9fafb;
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+        box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.4);
+      }
+
+      #uploadButton:hover {
+        background: #1d4ed8;
+      }
+
+      #retryPrecomputeButton {
+        margin-left: 8px;
+        background: #2563eb;
+        border-radius: 999px;
+        border: none;
+        padding: 8px 16px;
+        color: #f9fafb;
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+        box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.4);
+      }
+
+      #retryPrecomputeButton:disabled {
+        background: #1f2937;
+        color: #9ca3af;
+        cursor: default;
+        box-shadow: none;
+        opacity: 0.6;
+      }
+
+      #retryPrecomputeButton:not(:disabled):hover {
+        background: #1d4ed8;
+      }
+
+      #fileInput {
+        display: none;
+      }
+
+      main {
+        flex: 1;
+        display: flex;
+        padding: 12px 20px 20px;
+        gap: 16px;
+        overflow: hidden;
+      }
+
+      .canvas-container {
+        flex: 1;
+        border-radius: 12px;
+        background: radial-gradient(circle at top, #111827, #020617);
+        border: 1px solid #0f172a;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .placeholder {
+        text-align: center;
+        color: #4b5563;
+      }
+
+      .placeholder .hand {
+        font-size: 72px;
+        margin-bottom: 16px;
+        filter: drop-shadow(0 10px 25px rgba(0, 0, 0, 0.8));
+      }
+
+      .placeholder-text {
+        letter-spacing: 0.2em;
+        font-size: 12px;
+      }
+
+      .canvas-wrapper {
+        position: relative;
+        display: inline-block;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid #1f2937;
+        background: #000;
+        /* 固定为 16:9 显示区域，基准 1920x1080，在窗口较小时按比例缩放 */
+        width: min(1920px, 100%);
+        aspect-ratio: 16 / 9;
+        max-height: calc(100vh - 160px);
+      }
+
+      #baseImage {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain; /* 保持图片比例，居中铺在 16:9 区域内 */
+      }
+
+      #overlayImage {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        pointer-events: none;
+        display: none;
+        z-index: 2;
+      }
+
+      #fixedOverlay {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        pointer-events: none;
+        display: none;
+        z-index: 1;
+      }
+
+      .side-panel {
+        width: 260px;
+        border-radius: 12px;
+        background: #020617;
+        border: 1px solid #111827;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .panel-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #9ca3af;
+      }
+
+      .mode-group {
+        display: flex;
+        gap: 6px;
+      }
+
+      .mode-button {
+        flex: 1;
+        border-radius: 999px;
+        border: 1px solid #1f2937;
+        background: #030712;
+        color: #9ca3af;
+        padding: 6px 8px;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .mode-button.active {
+        background: #111827;
+        border-color: #2563eb;
+        color: #e5e7eb;
+      }
+
+      .field-label {
+        font-size: 11px;
+        color: #6b7280;
+      }
+
+      #promptInput {
+        width: 100%;
+        border-radius: 8px;
+        border: 1px solid #1f2937;
+        background: #020617;
+        color: #e5e7eb;
+        font-size: 12px;
+        padding: 6px 8px;
+        resize: vertical;
+        min-height: 60px;
+      }
+
+      #promptInput:focus {
+        outline: none;
+        border-color: #3b82f6;
+      }
+
+      #runTextButton {
+        margin-top: 6px;
+        width: 100%;
+        border-radius: 999px;
+        border: 1px solid #1f2937;
+        background: #111827;
+        color: #e5e7eb;
+        padding: 6px 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      #runTextButton:hover {
+        background: #1f2937;
+      }
+
+      #status {
+        font-size: 11px;
+        color: #6b7280;
+        min-height: 32px;
+        border-radius: 8px;
+        background: #020617;
+        border: 1px solid #020617;
+        padding: 6px 8px;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      .loading-overlay {
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(circle at top, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.98));
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 999;
+        backdrop-filter: blur(4px);
+      }
+
+      .loading-overlay.visible {
+        display: flex;
+      }
+
+      .loading-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .loading-icon {
+        width: 64px;       /* 固定宽度 */
+        height: 64px;      /* 固定高度 */
+        font-size: 64px;
+        filter: drop-shadow(0 10px 25px rgba(0, 0, 0, 0.8));
+        animation: loading-bounce 1s ease-in-out infinite;
+      }
+
+      .loading-text {
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        color: #9ca3af;
+      }
+
+      @keyframes loading-bounce {
+        0% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-6px);
+        }
+        100% {
+          transform: translateY(0);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-root">
+      <header>
+        <div class="logo">
+          <img src="icon/icon.png" alt="Logo" class="logo-icon" />
+          <span>SAM 3 <span class="accent">Auto Selection</span></span>
+        </div>
+
+        <div class="toolbar">
+        <div class="inputs-row">
+          <div>
+            <div class="field-label">后端模型地址</div>
+            <div class="server-input-wrapper">
+              <input
+                id="serverInput" 
+                type="text"
+                value="http://localhost:8000"
+                spellcheck="false"
+              />
+              <span id="serverStatus" class="status-dot offline"></span>
+            </div>
+          </div>
+
+          <div>
+            <div class="field-label">Sam3 模型地址</div>
+            <input
+              id="modelPathInput"
+              type="text"
+              value="D:/HF_DATA/sam3"
+              spellcheck="false"
+              placeholder="SAM 模型路径，例如 D:/HF_DATA/sam3"
+            />
+            </div>
+          </div>
+        </div>
+
+
+        <div>
+          <button id="uploadButton">上传图片</button>
+          <button id="retryPrecomputeButton" disabled>重试预处理</button>
+          <input id="fileInput" type="file" accept="image/*" />
+        </div>
+      </header>
+
+      <main>
+        <div class="canvas-container" id="canvasContainer">
+          <div class="placeholder" id="placeholder">
+            <div class="hand">🖱️</div>
+            <div class="placeholder-text">UPLOAD TO START</div>
+          </div>
+
+          <div class="canvas-wrapper hidden" id="canvasWrapper">
+            <img id="baseImage" alt="Base" />
+            <img id="overlayImage" alt="" />
+            <img id="fixedOverlay" alt="" />
+          </div>
+        </div>
+
+        <aside class="side-panel">
+          <div class="panel-title">Mode</div>
+          <div class="mode-group">
+            <button
+              class="mode-button active"
+              id="modeHover"
+              data-mode="hover"
+            >
+              悬停选取
+            </button>
+            <button class="mode-button" id="modeClick" data-mode="click">
+              点击分割
+            </button>
+            <button class="mode-button" id="modeText" data-mode="text">
+              文字分割
+            </button>
+          </div>
+
+          <div id="textControls" class="hidden">
+            <div class="field-label" style="margin-top: 8px">
+              文本提示（英文逗号分隔）
+            </div>
+            <textarea
+              id="promptInput"
+              placeholder="例如: car, wheel"
+            ></textarea>
+            <button id="runTextButton">运行文字分割</button>
+          </div>
+
+          <div>
+            <div class="field-label" style="margin-top: 8px">状态</div>
+            <div id="status">等待上传图片...</div>
+          </div>
+        </aside>
+      </main>
+
+      <!-- 全屏 Loading，使用同样的手型 icon 做动效 -->
+      <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-content">
+           <img src="icon/icon.png" alt="Loading" class="loading-icon" />
+          <div class="loading-text">正在上传并处理图片...</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const serverInput = document.getElementById("serverInput");
+      const serverStatus = document.getElementById("serverStatus");
+      const modelPathInput = document.getElementById("modelPathInput");
+      const uploadButton = document.getElementById("uploadButton");
+      const retryPrecomputeButton = document.getElementById("retryPrecomputeButton");
+      const fileInput = document.getElementById("fileInput");
+      const baseImage = document.getElementById("baseImage");
+      const overlayImage = document.getElementById("overlayImage");
+      const fixedOverlay = document.getElementById("fixedOverlay");
+      const placeholder = document.getElementById("placeholder");
+      const canvasWrapper = document.getElementById("canvasWrapper");
+      const statusEl = document.getElementById("status");
+      const modeButtons = document.querySelectorAll(".mode-button");
+      const promptInput = document.getElementById("promptInput");
+      const runTextButton = document.getElementById("runTextButton");
+      const textControls = document.getElementById("textControls");
+      const loadingOverlay = document.getElementById("loadingOverlay");
+      const loadingText = loadingOverlay.querySelector(".loading-text");
+
+      let imageId = null;
+      let lastRequestId = 0;
+      let currentMode = "hover";
+      let lastHoverX = null;
+      let lastHoverY = null;
+      let hoverInFlight = false;
+      const HOVER_MIN_DISTANCE = 10;
+
+      // ONNX 悬停相关状态
+      let decoderSession = null;
+      let emb0 = null,
+        emb1 = null,
+        emb2 = null;
+      let shape0 = null,
+        shape1 = null,
+        shape2 = null;
+      let onnxReady = false;
+      let origH = null;
+      let origW = null;
+      let decoderTargetSize = 1024;
+      let hoverUseOnnx = false; // 预处理成功后，在悬停模式下启用 ONNX
+      let lastImageDataUrl = null; // 最近一次上传/处理使用的图片 data URL
+
+      function apiBase() {
+        return serverInput.value.replace(/\/+$/, "");
+      }
+
+      function setServerOnline(online) {
+        serverStatus.classList.toggle("online", online);
+        serverStatus.classList.toggle("offline", !online);
+      }
+
+      function setLoading(isLoading, text) {
+        if (isLoading) {
+          loadingText.textContent = text || "正在上传并处理图片...";
+          loadingOverlay.classList.add("visible");
+        } else {
+          loadingOverlay.classList.remove("visible");
+        }
+      }
+
+      function clearOverlay() {
+        overlayImage.src = "";
+        overlayImage.style.display = "none";
+        fixedOverlay.src = "";
+        fixedOverlay.style.display = "none";
+      }
+
+      function flatten(arr) {
+        return arr.flat(Infinity);
+      }
+
+      async function ensureDecoderSession() {
+        if (decoderSession) return;
+        const url = `${apiBase()}/sam3_decoder.onnx`;
+        statusEl.textContent = "正在下载 ONNX 模型...";
+        decoderSession = await ort.InferenceSession.create(url);
+        statusEl.textContent = "ONNX 模型加载完成。";
+      }
+
+      async function decodePointONNX(normPoints, normLabels) {
+        if (!decoderSession || !onnxReady || !emb0) return null;
+
+        const pts = new Float32Array(flatten(normPoints));
+        // input_labels 是 int64，这里用 BigInt64Array
+        const labelsFlat = flatten(normLabels).map((v) => BigInt(v));
+        const lbl = new BigInt64Array(labelsFlat);
+
+        const feeds = {};
+        for (const inp of decoderSession.inputNames) {
+          if (inp === "image_embedding_s0") {
+            feeds[inp] = new ort.Tensor("float32", emb0, shape0);
+          } else if (inp === "image_embedding_s1") {
+            feeds[inp] = new ort.Tensor("float32", emb1, shape1);
+          } else if (inp === "image_embedding_s2") {
+            feeds[inp] = new ort.Tensor("float32", emb2, shape2);
+          } else if (inp === "input_points") {
+            feeds[inp] = new ort.Tensor("float32", pts, [
+              normPoints.length,
+              normPoints[0].length,
+              normPoints[0][0].length,
+              2,
+            ]);
+          } else if (inp === "input_labels") {
+            feeds[inp] = new ort.Tensor("int64", lbl, [
+              normLabels.length,
+              normLabels[0].length,
+              normLabels[0][0].length,
+            ]);
+          }
+        }
+
+        const outputs = await decoderSession.run(feeds);
+        return outputs["pred_masks"];
+      }
+
+      uploadButton.addEventListener("click", () => {
+        fileInput.click();
+      });
+
+      // 公共的“上传后 + 预处理”流程，供首次上传和重试按钮共用
+      async function processImageDataUrl(dataUrl) {
+        lastImageDataUrl = dataUrl;
+        baseImage.src = dataUrl;
+        clearOverlay();
+        placeholder.classList.add("hidden");
+        canvasWrapper.classList.remove("hidden");
+        statusEl.textContent = "正在上传图片并预处理悬停特征...";
+        setLoading(true, "正在上传并预处理图片，请稍候...");
+        retryPrecomputeButton.disabled = true;
+
+        try {
+          // 1. 先把图片发给后端，获取 image_id
+          const res = await fetch(`${apiBase()}/set_image`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image_data: dataUrl,
+              model_path: modelPathInput.value.trim() || null,
+            }),
+          });
+          if (!res.ok) {
+            throw new Error(await res.text());
+          }
+          const json = await res.json();
+          imageId = json.image_id;
+          setServerOnline(true);
+
+          // 每次更换图片时重置 ONNX 状态（decoderSession 会被续用）
+          emb0 = emb1 = emb2 = null;
+          shape0 = shape1 = shape2 = null;
+          onnxReady = false;
+          hoverUseOnnx = false;
+          origH = null;
+          origW = null;
+          decoderTargetSize = 1024;
+
+          // 2. 自动执行一次预处理：下载 decoder ONNX（若尚未加载）+ 提取特征
+          statusEl.textContent = "图片已上传，正在预处理悬停特征...";
+          await ensureDecoderSession();
+
+          const embRes = await fetch(`${apiBase()}/get_embeddings`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image_id: imageId }),
+          });
+          if (!embRes.ok) {
+            throw new Error(await embRes.text());
+          }
+          const embJson = await embRes.json();
+          const [e0, e1, e2] = embJson.embeddings;
+
+          // 记录原始图像尺寸和 decoder 目标尺寸，后续在浏览器端自行归一化点击坐标
+          if (Array.isArray(embJson.original_sizes) && embJson.original_sizes.length > 0) {
+            const sz = embJson.original_sizes[0];
+            if (Array.isArray(sz) && sz.length >= 2) {
+              origH = sz[0];
+              origW = sz[1];
+            }
+          } else if (baseImage.naturalWidth && baseImage.naturalHeight) {
+            origH = baseImage.naturalHeight;
+            origW = baseImage.naturalWidth;
+          }
+          if (typeof embJson.target_size === "number" && embJson.target_size > 0) {
+            decoderTargetSize = embJson.target_size;
+          }
+
+          shape0 = [e0.length, e0[0].length, e0[0][0].length, e0[0][0][0].length];
+          shape1 = [e1.length, e1[0].length, e1[0][0].length, e1[0][0][0].length];
+          shape2 = [e2.length, e2[0].length, e2[0][0].length, e2[0][0][0].length];
+
+          emb0 = new Float32Array(flatten(e0));
+          emb1 = new Float32Array(flatten(e1));
+          emb2 = new Float32Array(flatten(e2));
+
+          onnxReady = true;
+          hoverUseOnnx = true;
+
+          statusEl.textContent = "图片上传并预处理完成，可以开始悬停选取。";
+        } catch (err) {
+          console.error(err);
+          setServerOnline(false);
+          statusEl.textContent =
+            "上传或预处理失败，请检查后端地址、模型路径和 sam3_decoder.onnx。";
+          // 允许用户点击“重试预处理”按钮重新跑一次
+          retryPrecomputeButton.disabled = !lastImageDataUrl;
+        } finally {
+          // 预处理全部结束后再关闭 loading
+          setLoading(false);
+        }
+      }
+
+      fileInput.addEventListener("change", async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const dataUrl = e.target.result;
+          await processImageDataUrl(dataUrl);
+        };
+        reader.readAsDataURL(file);
+      });
+
+      // 首次上传失败后，可通过此按钮重复触发“上传 + 预处理”流程
+      retryPrecomputeButton.addEventListener("click", async () => {
+        if (!lastImageDataUrl) return;
+        await processImageDataUrl(lastImageDataUrl);
+      });
+
+      function getRelativeCoords(event) {
+          const rect = baseImage.getBoundingClientRect();
+          const naturalW = baseImage.naturalWidth;
+          const naturalH = baseImage.naturalHeight;
+          if (!naturalW || !naturalH) {
+            return { x: 0, y: 0 };
+          }
+
+          // 由于使用 object-fit: contain，图片会在 16:9 画布中按比例缩放并留黑边。
+          // 这里先算出图片在画布中的实际显示尺寸和偏移，再反算到原图坐标。
+          const scale = Math.min(rect.width / naturalW, rect.height / naturalH);
+          const displayW = naturalW * scale;
+          const displayH = naturalH * scale;
+          const offsetX = (rect.width - displayW) / 2;
+          const offsetY = (rect.height - displayH) / 2;
+
+          let x = event.clientX - rect.left - offsetX;
+          let y = event.clientY - rect.top - offsetY;
+
+          // 防止点在黑边区域，做一下裁剪
+          x = Math.max(0, Math.min(displayW, x));
+          y = Math.max(0, Math.min(displayH, y));
+
+          const origX = x / scale;
+          const origY = y / scale;
+
+          return { x: Math.round(origX), y: Math.round(origY) };
+        }
+
+      baseImage.addEventListener("mousemove", (event) => {
+          if (currentMode !== "hover") return;
+          if (!imageId) return;
+          if (!baseImage.naturalWidth || !baseImage.naturalHeight) return;
+          // 悬停模式现在只在预处理（ONNX 特征提取）完成后工作，
+          // 不再走后端慢速路径。
+          if (!onnxReady || !hoverUseOnnx) return;
+
+          const coords = getRelativeCoords(event);
+
+          if (lastHoverX !== null && lastHoverY !== null) {
+            const dx = coords.x - lastHoverX;
+            const dy = coords.y - lastHoverY;
+            const dist = Math.hypot(dx, dy);
+            if (dist < HOVER_MIN_DISTANCE) {
+              return;
+            }
+          }
+
+          lastHoverX = coords.x;
+          lastHoverY = coords.y;
+
+          handleHoverOnnx(coords.x, coords.y);
+        });
+
+      baseImage.addEventListener("click", (event) => {
+        if (!imageId) return;
+        const coords = getRelativeCoords(event);
+
+        if (currentMode === "click") {
+          // 原来的点击分割逻辑
+            requestSegmentPoint(coords.x, coords.y);
+          return;
+        }
+
+        if (currentMode === "hover") {
+          // 悬停模式下，点击左键将当前悬停选区“固定”下来：
+          // 1. 如果当前没有遮罩（例如还没悬停过），则忽略。
+          if (!overlayImage.src) return;
+
+          // 2. 基于当前 overlay 图像构造一个带 2px 白色描边的最终遮罩。
+          const fullW = baseImage.naturalWidth || overlayImage.naturalWidth;
+          const fullH = baseImage.naturalHeight || overlayImage.naturalHeight;
+          if (!fullW || !fullH) return;
+
+          const fixedCanvas = document.createElement("canvas");
+          fixedCanvas.width = fullW;
+          fixedCanvas.height = fullH;
+          const ctx = fixedCanvas.getContext("2d");
+
+          // 将当前遮罩按原图分辨率绘制到画布上
+          ctx.drawImage(overlayImage, 0, 0, fullW, fullH);
+
+          const imgData = ctx.getImageData(0, 0, fullW, fullH);
+          const data = imgData.data;
+          const size = fullW * fullH;
+
+          // 从 alpha 通道得到二值 mask
+          const mask = new Uint8Array(size);
+          for (let i = 0; i < size; i++) {
+            const a = data[i * 4 + 3];
+            mask[i] = a > 0 ? 1 : 0;
+          }
+
+          // 计算边缘：mask=1 且周围存在 0 的像素
+          const edge = new Uint8Array(size);
+          for (let y = 0; y < fullH; y++) {
+            for (let x = 0; x < fullW; x++) {
+              const idx = y * fullW + x;
+              if (!mask[idx]) continue;
+              let isEdge = false;
+              for (let dy = -1; dy <= 1 && !isEdge; dy++) {
+                for (let dx = -1; dx <= 1 && !isEdge; dx++) {
+                  if (dx === 0 && dy === 0) continue;
+                  const nx = x + dx;
+                  const ny = y + dy;
+                  if (nx < 0 || nx >= fullW || ny < 0 || ny >= fullH) {
+                    isEdge = true;
+                    break;
+                  }
+                  if (!mask[ny * fullW + nx]) {
+                    isEdge = true;
+                    break;
+                  }
+                }
+              }
+              if (isEdge) {
+                edge[idx] = 1;
+              }
+            }
+          }
+
+          // 将边缘膨胀一圈，形成约 2px 的描边
+          const edgeDilated = new Uint8Array(size);
+          for (let y = 0; y < fullH; y++) {
+            for (let x = 0; x < fullW; x++) {
+              let v = 0;
+              for (let dy = -1; dy <= 1 && !v; dy++) {
+                for (let dx = -1; dx <= 1 && !v; dx++) {
+                  const nx = x + dx;
+                  const ny = y + dy;
+                  if (nx >= 0 && nx < fullW && ny >= 0 && ny < fullH) {
+                    if (edge[ny * fullW + nx]) v = 1;
+                  }
+                }
+              }
+              edgeDilated[y * fullW + x] = v;
+            }
+          }
+
+          // 在边缘位置覆盖为白色（其余区域保持原遮罩颜色）
+          for (let i = 0; i < size; i++) {
+            if (edgeDilated[i]) {
+              const idx4 = i * 4;
+              data[idx4] = 255;     // R
+              data[idx4 + 1] = 255; // G
+              data[idx4 + 2] = 255; // B
+              data[idx4 + 3] = 255; // A
+            }
+          }
+
+          ctx.putImageData(imgData, 0, 0);
+
+          // 每次点击都会覆盖 fixedOverlay，相当于清空上一个固定选区，只保留当前一个
+          fixedOverlay.src = fixedCanvas.toDataURL("image/png");
+          fixedOverlay.style.display = "block";
+
+          // 预览层清空，只显示固定好的选区
+          overlayImage.src = "";
+          overlayImage.style.display = "none";
+
+          statusEl.textContent = `已固定选区，坐标 (${coords.x}, ${coords.y})`;
+        }
+      });
+
+      async function handleHoverOnnx(x, y) {
+        if (!imageId) return;
+        if (hoverInFlight) return;
+        if (!onnxReady || !emb0 || !emb1 || !emb2) return;
+        if (!origH || !origW || !decoderTargetSize) return;
+
+        hoverInFlight = true;
+
+        try {
+          // 在前端自行做坐标归一化：x' = x * (target_size / origW), y' = y * (target_size / origH)
+          const sx = decoderTargetSize / origW;
+          const sy = decoderTargetSize / origH;
+          const nx = x * sx;
+          const ny = y * sy;
+
+          const normPoints = [[[[nx, ny]]]];
+          const normLabels = [[[1]]];
+
+          const pred = await decodePointONNX(normPoints, normLabels);
+          if (!pred) {
+            hoverInFlight = false;
+            return;
+          }
+
+          // pred: [1, 1, 1, H, W]
+          const H = pred.dims[3];
+          const W = pred.dims[4];
+          const data = pred.data;
+
+          // logits -> 粗二值 mask
+          const bin = new Uint8Array(H * W);
+          for (let i = 0; i < H * W; i++) {
+            bin[i] = data[i] > 0 ? 1 : 0;
+          }
+
+          // 简单 3x3 闭运算，平滑边缘 & 填小洞
+          function dilate(src, w, h) {
+            const dst = new Uint8Array(src.length);
+            for (let y = 0; y < h; y++) {
+              for (let x = 0; x < w; x++) {
+                let v = 0;
+                for (let dy = -1; dy <= 1 && !v; dy++) {
+                  for (let dx = -1; dx <= 1 && !v; dx++) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                      if (src[ny * w + nx]) v = 1;
+                    }
+                  }
+                }
+                dst[y * w + x] = v;
+              }
+            }
+            return dst;
+          }
+
+          function erode(src, w, h) {
+            const dst = new Uint8Array(src.length);
+            for (let y = 0; y < h; y++) {
+              for (let x = 0; x < w; x++) {
+                let v = 1;
+                for (let dy = -1; dy <= 1 && v; dy++) {
+                  for (let dx = -1; dx <= 1 && v; dx++) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                      if (!src[ny * w + nx]) v = 0;
+                    }
+                  }
+                }
+                dst[y * w + x] = v;
+              }
+            }
+            return dst;
+          }
+
+          let smooth = dilate(bin, W, H);
+          smooth = erode(smooth, W, H);
+
+          // 先在一个小 canvas 上绘制低分辨率 mask，
+          // 再把它按原图比例拉伸到与原图相同的宽高，避免在 16:9 画布里被额外拉伸。
+          const maskData = new Uint8ClampedArray(H * W * 4);
+          for (let i = 0; i < H * W; i++) {
+            const v = smooth[i];
+            const idx = i * 4;
+            maskData[idx] = 30;
+            maskData[idx + 1] = 144;
+            maskData[idx + 2] = 255;
+            maskData[idx + 3] = v ? 160 : 0;
+          }
+
+          // 低分辨率 mask 画布
+          const maskCanvas = document.createElement("canvas");
+          maskCanvas.width = W;
+          maskCanvas.height = H;
+          const mctx = maskCanvas.getContext("2d");
+          const imgData = new ImageData(maskData, W, H);
+          mctx.putImageData(imgData, 0, 0);
+
+          // 与原图相同宽高的画布（使用 naturalWidth/Height，保持与服务器返回的 overlay 一致）
+          const fullCanvas = document.createElement("canvas");
+          const fullW = baseImage.naturalWidth || W;
+          const fullH = baseImage.naturalHeight || H;
+          fullCanvas.width = fullW;
+          fullCanvas.height = fullH;
+          const fctx = fullCanvas.getContext("2d");
+          fctx.drawImage(maskCanvas, 0, 0, fullW, fullH);
+
+          overlayImage.src = fullCanvas.toDataURL("image/png");
+          overlayImage.style.display = "block";
+          statusEl.textContent = `ONNX 悬停分割坐标: (${x}, ${y})`;
+        } catch (err) {
+          console.error(err);
+        } finally {
+          hoverInFlight = false;
+        }
+      }
+      async function requestSegmentPoint(x, y) {
+        const currentRequestId = ++lastRequestId;
+        statusEl.textContent = `点击坐标: (${x}, ${y})，请求中...`;
+
+        try {
+          const res = await fetch(`${apiBase()}/segment_point`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image_id: imageId, x, y }),
+          });
+          if (!res.ok) {
+            statusEl.textContent = "当前点未检测到目标。";
+            clearOverlay();
+            return;
+          }
+          const json = await res.json();
+
+          if (currentRequestId !== lastRequestId) {
+            // 有更新的请求发出，这次结果丢弃
+            return;
+          }
+
+          overlayImage.src = json.image;
+          overlayImage.style.display = "block";
+          statusEl.textContent = `已更新选区，坐标 (${x}, ${y})`;
+        } catch (err) {
+          console.error(err);
+          setServerOnline(false);
+          statusEl.textContent = "请求失败，请检查后端。";
+        }
+      }
+
+
+
+      modeButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          modeButtons.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          currentMode = btn.dataset.mode;
+          // 模式切换时，丢弃之前的悬停请求，避免旧响应在新模式下生效
+          lastRequestId++;
+          hoverInFlight = false;
+          textControls.classList.toggle("hidden", currentMode !== "text");
+          clearOverlay();
+          if (currentMode === "text") {
+            statusEl.textContent =
+              "输入文本提示后点击“运行文字分割”。";
+          }
+        });
+      });
+
+      runTextButton.addEventListener("click", async () => {
+        if (!imageId) {
+          statusEl.textContent = "请先上传图片。";
+          return;
+        }
+        const text = promptInput.value.trim();
+        if (!text) {
+          statusEl.textContent = "文本提示不能为空。";
+          return;
+        }
+        statusEl.textContent = "文字分割中...";
+
+        try {
+          const res = await fetch(`${apiBase()}/segment_text`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image_id: imageId, text }),
+          });
+          if (!res.ok) {
+            statusEl.textContent =
+              "文字分割失败，请检查后端日志。";
+            return;
+          }
+          const json = await res.json();
+          overlayImage.src = json.image;
+          overlayImage.style.display = "block";
+          statusEl.textContent = "文字分割完成。";
+        } catch (err) {
+          console.error(err);
+          setServerOnline(false);
+          statusEl.textContent = "请求失败，请检查后端。";
+        }
+      });
+
+    </script>
+  </body>
+</html>
