@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+transformers
+torch
+onnx
+onnxruntime
+onnxruntime-tools
+numpy
+Pillow
+opencv-python
+python-multipart
+
