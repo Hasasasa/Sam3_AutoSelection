@@ -62,6 +62,9 @@ This will:
 - Activate it.
 - Install all packages listed in `requirements.txt`.
 
+By default, the installed `torch` / `torchvision` work on **CPU**.  
+If you want to use **GPU (CUDA)**, install the corresponding CUDA builds of `torch` and `torchvision` yourself inside the virtual environment, following the official PyTorch instructions: <https://pytorch.org/get-started/>.
+
 Later, whenever you work on the project, activate the environment manually:
 
 ```bash
@@ -111,4 +114,3 @@ By default the API is served on:
 ## 2. License
 
 See `LICENSE` in this repository for licensing terms.
-

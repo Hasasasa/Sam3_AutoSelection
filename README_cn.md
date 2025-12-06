@@ -62,6 +62,9 @@ setup_venv.bat
 - 自动激活该虚拟环境；
 - 根据 `requirements.txt` 安装所有依赖包。
 
+默认情况下，`requirements.txt` 中安装的 `torch` / `torchvision` 为 **CPU 版本**，可以在没有 GPU 的环境下正常运行。  
+如果你希望使用 **GPU（CUDA）** 加速推理，请在虚拟环境中根据 PyTorch 官方说明手动安装对应 CUDA 版本的 `torch` 和 `torchvision`：<https://pytorch.org/get-started/>。
+
 之后每次使用项目，只需先手动激活虚拟环境：
 
 ```bat
@@ -108,4 +111,3 @@ python server.py
 ## 2. 许可证
 
 请阅读仓库中的 `LICENSE` 文件，了解并遵守本项目的使用许可条款。
-
