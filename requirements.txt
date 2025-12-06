@@ -1,7 +1,8 @@
 fastapi
 uvicorn
-transformers
+git+https://github.com/huggingface/transformers.git
 torch
+torchvision
 onnx
 onnxruntime
 onnxruntime-tools
@@ -9,4 +10,3 @@ numpy
 Pillow
 opencv-python
 python-multipart
-
