@@ -108,9 +108,11 @@ By default the API is served on:
      - Click a point; the backend returns a high‑quality mask with a white outline.
    - **Text Segmentation**
      - Enter prompts like `window,wheel` and click **Run Text Segmentation** to get text‑driven masks.
-
 ---
 
-## 2. License
+## 2. [Design Document](Design_Document.md)
+---
+
+## 3. License
 
 See `LICENSE` in this repository for licensing terms.
