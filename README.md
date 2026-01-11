@@ -1,5 +1,9 @@
 # SAM 3 Auto Selection (Web Demo)
 
+Video introduction:
+- YouTube: https://youtu.be/OQcGTeyRsm4
+- Bilibili: https://www.bilibili.com/video/BV1pk6dBYEd8
+
 English | [中文说明](README_cn.md)
 
 ---

@@ -1,6 +1,9 @@
 # SAM 3 自动选取（Web 演示）
-
 [English](README.md) | 中文说明
+
+视频介绍：
+- YouTube：https://youtu.be/OQcGTeyRsm4
+- Bilibili：https://www.bilibili.com/video/BV1pk6dBYEd8
 
 ---
 
