@@ -10,11 +10,13 @@ English | [中文说明](README_cn.md)
 
 This project is a web demo for **SAM3** interactive segmentation with three modes:
 
-- **Hover Selection** – real‑time hover segmentation accelerated by a **decoder‑only ONNX model** running in the browser.
+- **Hover Selection** – real‑time hover segmentation accelerated by a **decoder‑only ONNX model** running in the browser. The decoder emits 3 candidate masks and the frontend picks the best one by IoU, yielding a complete and stable selection.
 - **Click Segmentation** – precise backend segmentation around a clicked point (PyTorch).
 - **Text Segmentation** – segmentation driven by natural‑language prompts (e.g. `car, wheel`).
 
 The backend runs the **SAM3 encoder (PyTorch)** once per image, and the frontend runs a **decoder‑only ONNX** model in the browser for fast hover segmentation.
+
+> **Hover quality optimization:** the decoder is exported in **multimask** mode (3 candidate masks + per‑mask IoU scores) and the frontend selects the "whole object" mask by IoU — so the selection is more complete and stays stable while the cursor moves within an object (no flicker on every move). The in‑browser post‑processing now mirrors the backend `post_process_masks`: it upscales the **raw logits** to display resolution *before* thresholding (smooth edges, concavities preserved), then applies a **morphological close** to fill small edge notches, **keeps the largest connected component** to denoise, and **fills interior holes** — producing a smooth, solid mask.
 
 For more detailed technical notes (architecture, APIs, ONNX export, coordinate math, etc.), see:
 
