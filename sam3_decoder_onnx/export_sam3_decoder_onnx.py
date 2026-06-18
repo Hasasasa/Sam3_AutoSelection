@@ -39,8 +39,8 @@ class Sam3DecoderOnly(torch.nn.Module):
         input_points: torch.FloatTensor,
         input_labels: torch.LongTensor,
         input_masks: torch.FloatTensor | None = None,
-        multimask_output: bool = False,
-    ) -> torch.FloatTensor:
+        multimask_output: bool = True,
+    ) -> tuple[torch.FloatTensor, torch.FloatTensor]:
         batch_size = image_embedding_s2.shape[0]
 
         image_embeddings = [
@@ -81,7 +81,9 @@ class Sam3DecoderOnly(torch.nn.Module):
             target_embedding=None,
         )
 
-        return low_res_multimasks
+        # multimask_output=True 时返回 3 个候选 mask + 各自 IoU 分数，
+        # 前端据 IoU 选最优（通常是“整体”那个），保证选区完整且稳定。
+        return low_res_multimasks, iou_scores
 
 
 def export_decoder_onnx(
@@ -89,7 +91,9 @@ def export_decoder_onnx(
     onnx_out: str,
     opset: int = 17,
 ) -> None:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # 导出强制用 CPU：tracing 是一次性的、不吃性能，且能避开 HF prompt_encoder 在 CUDA 上
+    # tracing 时内部 index 张量留在 CPU 引发的 “tensors on different devices” 错误。
+    device = "cpu"
     print(f"[Decoder-ONNX] Loading Sam3TrackerModel from {model_path} on {device}...")
 
     model = Sam3TrackerModel.from_pretrained(model_path).to(device)
@@ -133,7 +137,7 @@ def export_decoder_onnx(
             input_points,
             input_labels,
             None,
-            False,
+            True,
         ),
         onnx_out,
         input_names=[
@@ -145,7 +149,7 @@ def export_decoder_onnx(
             "input_masks",
             "multimask_output",
         ],
-        output_names=["pred_masks"],
+        output_names=["pred_masks", "iou_scores"],
         opset_version=opset,
         dynamic_axes={
             "image_embedding_s0": {0: "batch"},
@@ -154,8 +158,11 @@ def export_decoder_onnx(
             "input_points": {0: "batch", 1: "point_batch", 2: "num_points"},
             "input_labels": {0: "batch", 1: "point_batch", 2: "num_points"},
             "pred_masks": {0: "batch", 1: "point_batch"},
+            "iou_scores": {0: "batch", 1: "point_batch"},
         },
         do_constant_folding=True,
+        dynamo=False,  # 强制旧版 TorchScript 导出器：匹配本脚本的 input_names/dynamic_axes 写法，
+                       # 并绕开新版 dynamo 导出器在 Windows GBK 控制台打印 emoji 导致的 UnicodeEncodeError
     )
 
     print(f"[Decoder-ONNX] Exported decoder ONNX to: {onnx_out}")

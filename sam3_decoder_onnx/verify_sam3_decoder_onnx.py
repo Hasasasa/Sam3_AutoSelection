@@ -62,7 +62,7 @@ def main(
             pixel_values=pixel_values,
             input_points=input_points,
             input_labels=input_labels,
-            multimask_output=False,
+            multimask_output=True,  # 与导出脚本一致：decoder 现输出 3 个候选 mask
         )
         pt_masks = pt_outputs.pred_masks.detach().cpu()
 

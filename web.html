@@ -128,8 +128,8 @@
       let origH = null;
       let origW = null;
       let decoderTargetSize = 1024;
-      let hoverUseOnnx = false; 
-      let lastImageDataUrl = null; 
+      let hoverUseOnnx = false;
+      let lastImageDataUrl = null;
 
       function apiBase() {
         return serverInput.value.replace(/\/+$/, "");
@@ -191,7 +191,7 @@
         }
 
         const outputs = await decoderSession.run(feeds);
-        return outputs["pred_masks"];
+        return outputs;
       }
 
       uploadButton.addEventListener("click", () => fileInput.click());
@@ -319,6 +319,7 @@
           if (!onnxReady || !hoverUseOnnx) return;
 
           const coords = getRelativeCoords(event);
+
           if (lastHoverX !== null && lastHoverY !== null) {
             const dx = coords.x - lastHoverX;
             const dy = coords.y - lastHoverY;
@@ -371,14 +372,6 @@
       // 前端图像处理算法库
       // -------------------------------------------------------------
 
-      function binarize(logits, w, h, threshold = 0.0) {
-        const mask = new Uint8Array(w * h);
-        for (let i = 0; i < w * h; i++) {
-            mask[i] = logits[i] > threshold ? 1 : 0;
-        }
-        return mask;
-      }
-
       function keepLargestComponent(mask, w, h) {
         const labels = new Int32Array(w * h).fill(0);
         let currentLabel = 1;
@@ -430,6 +423,8 @@
         return result;
       }
 
+      // FloodFill 填洞：从四边的背景灌水，灌不到的背景就是被前景包围的内部空洞，填为前景。
+      // 只填【完全封闭】的洞，不影响外轮廓的凹凸结构。
       function fillHoles(mask, w, h) {
         const floodMap = new Int32Array(w * h);
         const queue = [];
@@ -472,47 +467,46 @@
         return result;
       }
 
-      // [核心修改] 扫描线填充 (Scanline Fill)
-      // 逻辑：对每一行和每一列进行内部填充，然后取交集。
-      // 这能有效填补内部的复杂空洞，比 FloodFill 更强力。
-      function solidifyMask(mask, w, h) {
-        const fillH = new Uint8Array(w * h);
-        const fillV = new Uint8Array(w * h);
-
-        // 水平扫描填充
+      // 形态学膨胀（方形核，可分离：先水平后垂直；滑动计数 O(n)，不受半径影响）
+      function dilateMask(mask, w, h, r) {
+        if (r <= 0) return mask;
+        const tmp = new Uint8Array(w * h);
         for (let y = 0; y < h; y++) {
-            let minX = w, maxX = -1;
+            const row = y * w;
+            let count = 0;
+            for (let x = 0; x <= r && x < w; x++) count += mask[row + x];
             for (let x = 0; x < w; x++) {
-                if (mask[y * w + x]) {
-                    if (x < minX) minX = x;
-                    if (x > maxX) maxX = x;
-                }
-            }
-            if (minX <= maxX) {
-                for (let x = minX; x <= maxX; x++) fillH[y * w + x] = 1;
+                tmp[row + x] = count > 0 ? 1 : 0;
+                const out = x - r, add = x + r + 1;
+                if (out >= 0) count -= mask[row + out];
+                if (add < w) count += mask[row + add];
             }
         }
-
-        // 垂直扫描填充
+        const res = new Uint8Array(w * h);
         for (let x = 0; x < w; x++) {
-            let minY = h, maxY = -1;
+            let count = 0;
+            for (let y = 0; y <= r && y < h; y++) count += tmp[y * w + x];
             for (let y = 0; y < h; y++) {
-                if (mask[y * w + x]) {
-                    if (y < minY) minY = y;
-                    if (y > maxY) maxY = y;
-                }
-            }
-            if (minY <= maxY) {
-                for (let y = minY; y <= maxY; y++) fillV[y * w + x] = 1;
+                res[y * w + x] = count > 0 ? 1 : 0;
+                const out = y - r, add = y + r + 1;
+                if (out >= 0) count -= tmp[out * w + x];
+                if (add < h) count += tmp[add * w + x];
             }
         }
+        return res;
+      }
 
-        const result = new Uint8Array(w * h);
-        for (let i = 0; i < w * h; i++) {
-            // 取交集，保留物体的整体凸凹结构，但填满内部空洞
-            result[i] = fillH[i] & fillV[i];
-        }
-        return result;
+      // 形态学闭运算 = 先膨胀后腐蚀；腐蚀用 De Morgan：erode(M) = ¬dilate(¬M)。
+      // 作用：填平小缺口/凹槽、桥接细微断裂（如整车选区里漏掉的一小块轮胎），整体大小基本不变。
+      function closeMask(mask, w, h, r) {
+        if (r <= 0) return mask;
+        const dil = dilateMask(mask, w, h, r);
+        const inv = new Uint8Array(w * h);
+        for (let i = 0; i < w * h; i++) inv[i] = dil[i] ? 0 : 1;
+        const invDil = dilateMask(inv, w, h, r);
+        const res = new Uint8Array(w * h);
+        for (let i = 0; i < w * h; i++) res[i] = invDil[i] ? 0 : 1;
+        return res;
       }
 
       function bilinearUpscale(srcData, srcW, srcH, dstW, dstH) {
@@ -570,50 +564,45 @@
           const normPoints = [[[[nx, ny]]]];
           const normLabels = [[[1]]];
 
-          const pred = await decodePointONNX(normPoints, normLabels);
-          if (!pred) {
+          const out = await decodePointONNX(normPoints, normLabels);
+          if (!out || !out["pred_masks"]) {
             hoverInFlight = false;
             return;
           }
 
-          const srcH = pred.dims[3]; // 256
-          const srcW = pred.dims[4]; // 256
-          const srcData = pred.data; // logits
+          const predMasks = out["pred_masks"];   // [1, 1, numMasks, H, W]（低分辨率 logits）
+          const iouScores = out["iou_scores"];   // [1, 1, numMasks]
+          const numMasks = predMasks.dims[2];
+          const srcH = predMasks.dims[3]; // 解码器输出分辨率（动态读取，当前模型约 288）
+          const srcW = predMasks.dims[4];
 
-          // --- 改进后的处理流水线 (v9: 强化填补空洞) ---
-          
-          // 1. 低分辨率下的拓扑清理
-          const rawBin = binarize(srcData, srcW, srcH, 0.0);
-          const cleanBin = keepLargestComponent(rawBin, srcW, srcH);
-          
-          // 使用扫描线填充 (solidifyMask)
-          let solidMask = solidifyMask(cleanBin, srcW, srcH);
-          // 再加一层 FloodFill 保底
-          solidMask = fillHoles(solidMask, srcW, srcH);
-
-          // 2. 将清理并填补后的 Mask 作用回 Logits
-          const maskedLogits = new Float32Array(srcW * srcH);
-          for (let i = 0; i < srcW * srcH; i++) {
-              if (solidMask[i] === 1) {
-                  // [核心修复]：关键步骤
-                  // 之前的问题：即使 solidMask 填补了空洞，如果 srcData[i] 还是负数，
-                  // 那么上采样后的像素依然是透明的。
-                  // 现在的逻辑：如果 Mask 说是前景，但 Logits 是负数（说明是填出来的洞），
-                  // 强制给它一个高 Logits 值（例如 5.0），把它“焊死”。
-                  if (srcData[i] > 0) {
-                      maskedLogits[i] = srcData[i];
-                  } else {
-                      maskedLogits[i] = 5.0; // 强制填补值
+          // 多候选 mask 中按 IoU 选最优：通常是“整体物体”那个 → 选区完整，
+          // 且在物体内各点之间一致 → 悬停时自然稳定（参考工具的手感来源）。
+          let bestIdx = 0;
+          if (iouScores && iouScores.data && iouScores.data.length >= numMasks) {
+              let bestScore = -Infinity;
+              for (let m = 0; m < numMasks; m++) {
+                  if (iouScores.data[m] > bestScore) {
+                      bestScore = iouScores.data[m];
+                      bestIdx = m;
                   }
-              } else {
-                  maskedLogits[i] = -10.0;
               }
           }
 
-          // 3. 双线性插值上采样 Logits
-          const maxDim = 1024; 
+          const planeSize = srcH * srcW;
+          // 取出最优 mask 这一层的 logits（subarray 是视图，零拷贝）
+          const srcData = predMasks.data.subarray(bestIdx * planeSize, (bestIdx + 1) * planeSize);
+
+          // --- 处理流水线 (v11: 完整对齐后端 post_process_masks，在显示分辨率上做) ---
+          // 顺序与后端 segment_point 完全一致：
+          //   先把 256 的【原始 logits】双线性上采样到显示分辨率，再阈值 → 平滑边界；
+          //   然后在高分辨率上做「最大连通域」去噪 + 「FloodFill 填洞」 → 实心干净的 mask。
+          // 关键：不再用 -10 硬砍连通域外的 logit（那会让边界按 256 网格阶梯化、产生锯齿）。
+
+          // 1. 计算显示分辨率
+          const maxDim = 1024;
           const imgAspect = (baseImage.naturalWidth || srcW) / (baseImage.naturalHeight || srcH);
-          
+
           let dstW, dstH;
           if (imgAspect > 1) {
               dstW = maxDim;
@@ -623,18 +612,31 @@
               dstW = Math.round(maxDim * imgAspect);
           }
 
-          const highResLogits = bilinearUpscale(maskedLogits, srcW, srcH, dstW, dstH);
-
-          // 4. 生成高分辨率二值 Mask 和 描边
-          const imgData = new ImageData(dstW, dstH);
-          const pixels = imgData.data;
-
-          const highResMask = new Uint8Array(dstW * dstH);
-          for(let i=0; i<dstW*dstH; i++) {
+          // 2. 上采样【原始 logits】（不做任何硬填），阈值得到平滑边界
+          const highResLogits = bilinearUpscale(srcData, srcW, srcH, dstW, dstH);
+          let highResMask = new Uint8Array(dstW * dstH);
+          for (let i = 0; i < dstW * dstH; i++) {
               highResMask[i] = highResLogits[i] > 0.0 ? 1 : 0;
           }
 
-          // 5. 渲染
+          // 3. 闭运算：补回整体选区里漏掉的小块、桥接细微断裂（如整车里漏选的一小段轮胎）。
+          //    放在「最大连通域」之前，好让近乎断开的小块先被桥接回主体、不被当噪点丢掉。
+          //    半径越大越能「封住」深凹口的口子（封住后第 4 步 fillHoles 就能把整条深槽填满），
+          //    代价是尖角会更圆。dilateMask 是 O(n)，调大半径不增加计算量。
+          //    —— 这是补全选区凹口的【唯一旋钮】：还漏就调大（如 /100），凹口被过度填平就调小。
+          //    注意：闭运算是扩张型运算，只填凹陷、不磨凸出尖角，所以放心加大。
+          const closeR = Math.max(3, Math.round(dstW / 140));
+          highResMask = closeMask(highResMask, dstW, dstH, closeR);
+
+          // 4. 高分辨率去噪 + 填洞（对应后端 connectedComponents + floodFill）
+          highResMask = keepLargestComponent(highResMask, dstW, dstH);
+          highResMask = fillHoles(highResMask, dstW, dstH);
+
+          // 5. 准备渲染缓冲
+          const imgData = new ImageData(dstW, dstH);
+          const pixels = imgData.data;
+
+          // 6. 渲染
           for (let y = 0; y < dstH; y++) {
             for (let x = 0; x < dstW; x++) {
                 const idx = y * dstW + x;
@@ -690,7 +692,7 @@
 
           overlayImage.src = fullCanvas.toDataURL("image/png");
           overlayImage.style.display = "block";
-          
+
         } catch (err) {
           console.error(err);
         } finally {
